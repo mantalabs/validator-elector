@@ -7,7 +7,7 @@ set -o pipefail
 CREATE_KIND_CLUSTER=
 KIND_CLUSTER_NAME="validator-elector"
 KIND_IMAGE="kindest/node:v1.16.15"
-export KUBECONFIG="e2e/.kubeconfig"
+export KUBECONFIG="${PWD}/e2e/.kubeconfig"
 
 if ! [ -z "$CREATE_KIND_CLUSTER" ]; then
     kind create cluster \
