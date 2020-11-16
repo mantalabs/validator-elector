@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: validator-elector
+spec:
+  selector:
+    matchLabels:
+      app: validator-elector
+  replicas: 4
+  template:
+    metadata:
+      labels:
+        app: validator-elector
+    spec:
+      automountServiceAccountToken: true
+      serviceAccount: validator-elector
+      serviceAccountName: validator-elector
+      containers:
+        - name: validator-elector
+          image: validator-elector:test
+          args:
+            - -node-id=$(POD_NAME)
+            - -lease-namespace=$(POD_NAMESPACE)
+            - -lease-name=validator-lease
+            - -elector
+            - -listen
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.namespace

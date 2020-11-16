@@ -1,0 +1,39 @@
+apiVersion: v1
+automountServiceAccountToken: true
+kind: ServiceAccount
+metadata:
+  labels:
+    app: validator-elector
+  name: validator-elector
+
+---
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  labels:
+    app: validator-elector
+  name: validator-elector
+rules:
+  - apiGroups:
+      - coordination.k8s.io
+    resources:
+      - leases
+    verbs:
+      - '*'
+
+---
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  labels:
+    app: validator-elector
+  name: validator-elector
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: validator-elector
+subjects:
+  - kind: ServiceAccount
+    name: validator-elector
