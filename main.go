@@ -8,11 +8,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
 	
 	"github.com/apex/log"
+	"github.com/go-resty/resty/v2"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
@@ -46,14 +48,20 @@ func main() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 	ctx, cancel := context.WithCancel(context.Background())
+
+	controllerChan := make(chan string)
+	controllerWg := startController(controllerChan)
+
 	go func() {
 		<-sigChan
 		fmt.Println("Shutting down...")
+		controllerChan <- "shutdown"
+		controllerWg.Wait()
 		cancel()
 	}()
 
 	if *elector {
-		newElector(ctx, *nodeID, *leaseNamespace, *leaseName, *kubeconfig)
+		newElector(ctx, controllerChan, *nodeID, *leaseNamespace, *leaseName, *kubeconfig)
 	}
 
 	if *listen {
@@ -61,7 +69,35 @@ func main() {
 	}
 }
 
-func newElector(ctx context.Context, nodeID string, leaseNamespace string, leaseName string, kubeconfig string) {
+func startController(c chan string) (*sync.WaitGroup) {
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	// client := resty.New()
+	// resp, err := client.R().
+	// 	SetBody(map[string]interface{}{"jsonrpc": "2.0", "method": "eth_blockNumber", "params": []int{}, "id": 89999}).
+	// 	Post("http://127.0.0.1:8545")
+	// fmt.Printf("resp %v, err %v", resp, err)
+
+	go func() {
+		defer wg.Done()
+		for {
+			switch op := <- c; op {
+			case "shutdown":
+				log.Warn("Should stop validating")
+				return
+			case "start":
+				log.Warn("Should start validating")
+			case "stop":
+				log.Warn("Should stop validating")
+			}
+
+		}
+	}()
+	return &wg
+}
+
+func newElector(ctx context.Context, controllerChan chan string, nodeID string, leaseNamespace string, leaseName string, kubeconfig string) {
 	clientset, err := newClientset(kubeconfig)
 	if err != nil {
 		log.WithError(err).Fatal("failed to connect to cluster")
@@ -87,10 +123,14 @@ func newElector(ctx context.Context, nodeID string, leaseNamespace string, lease
 		Callbacks: leaderelection.LeaderCallbacks{
 			OnStartedLeading: func(ctx context.Context) {
 				atomic.StoreInt32(&leading, 1)
+				controllerChan <- "start"
 				log.WithField("id", nodeID).Info("started leading")
 			},
+			// If this is a graceful shutdown, the signal handler will have already sent "shutdown".
+			// Send "stop" below in case we lost the lock unexpectedly and should stop validating ASAP.
 			OnStoppedLeading: func() {
 				atomic.StoreInt32(&leading, 0)
+				controllerChan <- "stop"
 				log.WithField("id", nodeID).Info("stopped leading")
 			},
 			OnNewLeader: func(identity string) {

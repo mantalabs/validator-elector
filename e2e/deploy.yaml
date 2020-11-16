@@ -6,7 +6,7 @@ spec:
   selector:
     matchLabels:
       app: validator-elector
-  replicas: 4
+  replicas: 2
   template:
     metadata:
       labels:
@@ -35,3 +35,10 @@ spec:
                 fieldRef:
                   apiVersion: v1
                   fieldPath: metadata.namespace
+        - name: celo
+          image: us.gcr.io/celo-org/geth:baklava
+          args:
+            - --verbosity=3
+            - --syncmode=full
+            - --rpc
+            - XXX
