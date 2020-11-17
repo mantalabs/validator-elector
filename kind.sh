@@ -4,7 +4,7 @@ set -o errexit
 set -o nounset
 set -o pipefail
 
-CREATE_KIND_CLUSTER=
+CREATE_KIND_CLUSTER=1
 KIND_CLUSTER_NAME="validator-elector"
 KIND_IMAGE="kindest/node:v1.16.15"
 export KUBECONFIG="${PWD}/e2e/.kubeconfig"

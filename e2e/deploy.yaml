@@ -41,4 +41,10 @@ spec:
             - --verbosity=3
             - --syncmode=full
             - --rpc
-            - XXX
+            - --rpcaddr=0.0.0.0
+            - --rpcapi=eth,net,web3,debug,admin,personal
+            - --light.serve=90
+            - --light.maxpeers=1000
+            - --maxpeers=1100
+            - --nousb
+            - --baklava

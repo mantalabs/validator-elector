@@ -44,13 +44,14 @@ func main() {
 	if *leaseName == "" {
 		log.Fatal("-lease required")
 	}
-	
+	rpcURL := flag.String("rpc-url", "http://127.0.0.1:8545", "RPC URL")
+
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 	ctx, cancel := context.WithCancel(context.Background())
 
 	controllerChan := make(chan string)
-	controllerWg := startController(controllerChan)
+	controllerWg := startController(controllerChan, *rpcURL)
 
 	go func() {
 		<-sigChan
@@ -69,27 +70,53 @@ func main() {
 	}
 }
 
-func startController(c chan string) (*sync.WaitGroup) {
+func stopValidating(rpcURL string) {
+	client := resty.New()
+	log.Warn("Should stop validating")
+
+	// TODO(sbw): istanbul_stopValidating
+	resp, err := client.R().
+		SetBody(map[string]interface{}{"jsonrpc": "2.0", "method": "eth_blockNumber", "params": []int{}, "id": 89999}).
+		Post(rpcURL)
+	if err != nil {
+		log.WithError(err).Warn("failed to stop validating")
+	} else {
+		// TODO(sbw): there's probably an status code in the resp we need to check
+		log.Info(fmt.Sprintf("stopped validating: %v", resp))
+	}
+}
+
+func startValidating(rpcURL string) {
+	client := resty.New()
+	log.Warn("Should stop validating")
+
+	// TODO(sbw): istanbul_startValidating
+	resp, err := client.R().
+		SetBody(map[string]interface{}{"jsonrpc": "2.0", "method": "eth_blockNumber", "params": []int{}, "id": 89999}).
+		Post(rpcURL)
+	if err != nil {
+		log.WithError(err).Warn("failed to start validating")
+	} else {
+		// TODO(sbw): there's probably an status code in the resp we need to check
+		log.Info(fmt.Sprintf("started validating: %v", resp))
+	}
+}
+
+func startController(c chan string, rpcURL string) (*sync.WaitGroup) {
 	var wg sync.WaitGroup
 	wg.Add(1)
-
-	// client := resty.New()
-	// resp, err := client.R().
-	// 	SetBody(map[string]interface{}{"jsonrpc": "2.0", "method": "eth_blockNumber", "params": []int{}, "id": 89999}).
-	// 	Post("http://127.0.0.1:8545")
-	// fmt.Printf("resp %v, err %v", resp, err)
 
 	go func() {
 		defer wg.Done()
 		for {
 			switch op := <- c; op {
 			case "shutdown":
-				log.Warn("Should stop validating")
+				stopValidating(rpcURL)
 				return
 			case "start":
-				log.Warn("Should start validating")
+				startValidating(rpcURL)
 			case "stop":
-				log.Warn("Should stop validating")
+				stopValidating(rpcURL)
 			}
 
 		}
