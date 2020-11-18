@@ -233,7 +233,7 @@ func newHTTP(ctx context.Context, port int) {
 	if err := srv.Shutdown(ctxShutDown); err != nil {
 		log.WithError(err).Fatal("server shutdown failed")
 	}
-	
+
 	log.Info("server exited properly")
 	return
 }
