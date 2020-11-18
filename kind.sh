@@ -16,7 +16,7 @@ if ! [ -z "$CREATE_KIND_CLUSTER" ]; then
          --image ${KIND_IMAGE} \
          --name ${KIND_CLUSTER_NAME}
 fi
-    
+
 docker build -t validator-elector:test .
 kind load docker-image \
      --name="${KIND_CLUSTER_NAME}" \

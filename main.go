@@ -70,33 +70,25 @@ func main() {
 	}
 }
 
-func stopValidating(rpcURL string) {
+func rpc(rpcURL string, method string) {
 	client := resty.New()
 
-	// TODO(sbw): istanbul_stopValidating
 	resp, err := client.R().
-		SetBody(map[string]interface{}{"jsonrpc": "2.0", "method": "eth_blockNumber", "params": []int{}, "id": 89999}).
+		SetBody(map[string]interface{}{"jsonrpc": "2.0", "method": method, "params": []int{}, "id": 89999}).
 		Post(rpcURL)
 	if err != nil {
-		log.WithError(err).Warn("failed to stop validating")
+		log.Warnf("HTTP %v failed: %v", method, err)
 	} else {
-		// TODO(sbw): there's probably an status code in the resp we need to check
-		log.Info(fmt.Sprintf("stopped validating: %v", resp))
-	}
-}
-
-func startValidating(rpcURL string) {
-	client := resty.New()
-
-	// TODO(sbw): istanbul_startValidating
-	resp, err := client.R().
-		SetBody(map[string]interface{}{"jsonrpc": "2.0", "method": "eth_blockNumber", "params": []int{}, "id": 89999}).
-		Post(rpcURL)
-	if err != nil {
-		log.WithError(err).Warn("failed to start validating")
-	} else {
-		// TODO(sbw): there's probably an status code in the resp we need to check
-		log.Info(fmt.Sprintf("started validating: %v", resp))
+		var body map[string]interface{}
+		if err := json.Unmarshal(resp.Body(), &body); err != nil {
+			log.Warnf("failed to unmarshal response '%v': %v", resp, err)
+			return
+		}
+		if _, error := body["error"]; error {
+			log.Warnf("RPC %v failed: %v", method, resp)
+			return
+		}
+		log.Infof("%v succeeded: %v", method, resp)
 	}
 }
 
@@ -119,12 +111,12 @@ func startController(c chan string, rpcURL string) (*sync.WaitGroup) {
 
 			switch op {
 			case "shutdown":
-				stopValidating(rpcURL)
+				rpc(rpcURL, "istanbul_stopValidating")
 				return
 			case "start":
-				startValidating(rpcURL)
+				rpc(rpcURL, "istanbul_startValidating")
 			case "stop":
-				stopValidating(rpcURL)
+				rpc(rpcURL, "istanbul_stopValidating")
 			}
 		}
 	}()
