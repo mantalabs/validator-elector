@@ -72,7 +72,6 @@ func main() {
 
 func stopValidating(rpcURL string) {
 	client := resty.New()
-	log.Warn("Should stop validating")
 
 	// TODO(sbw): istanbul_stopValidating
 	resp, err := client.R().
@@ -88,7 +87,6 @@ func stopValidating(rpcURL string) {
 
 func startValidating(rpcURL string) {
 	client := resty.New()
-	log.Warn("Should stop validating")
 
 	// TODO(sbw): istanbul_startValidating
 	resp, err := client.R().
@@ -108,8 +106,18 @@ func startController(c chan string, rpcURL string) (*sync.WaitGroup) {
 
 	go func() {
 		defer wg.Done()
+
+		op := "stop"
+		ticker := time.NewTicker(time.Second)
 		for {
-			switch op := <- c; op {
+			select {
+			case <-ticker.C:
+				log.Infof("Refreshing desired validator state %v", op)
+			case op = <-c:
+				log.Infof("New desired validator state %v", op)
+			}
+
+			switch op {
 			case "shutdown":
 				stopValidating(rpcURL)
 				return
@@ -118,7 +126,6 @@ func startController(c chan string, rpcURL string) (*sync.WaitGroup) {
 			case "stop":
 				stopValidating(rpcURL)
 			}
-
 		}
 	}()
 	return &wg
