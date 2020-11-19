@@ -65,7 +65,46 @@ func main() {
 		cancel()
 	}()
 
-	newElector(ctx, controllerChan, nodeID, leaseNamespace, leaseName, kubeconfig)
+	clientset, err := newClientset(kubeconfig)
+	if err != nil {
+		klog.Fatalf("Failed to connect to cluster: %v", err)
+	}
+
+	lock := &resourcelock.LeaseLock{
+		LeaseMeta: metav1.ObjectMeta{
+			Name: leaseName,
+			Namespace: leaseNamespace,
+		},
+		Client: clientset.CoordinationV1(),
+		LockConfig: resourcelock.ResourceLockConfig{
+			Identity: nodeID,
+		},
+	}
+
+	config := leaderelection.LeaderElectionConfig{
+		Lock: lock,
+		ReleaseOnCancel: true,
+		LeaseDuration: leaseDuration,
+		RenewDeadline: renewDeadline,
+		RetryPeriod: retryPeriod,
+		Callbacks: leaderelection.LeaderCallbacks{
+			OnStartedLeading: func(ctx context.Context) {
+				controllerChan <- "start"
+				klog.Infof("%v started leading", nodeID)
+			},
+			// If this is a graceful shutdown, the signal handler will have already sent "shutdown".
+			// Send "stop" below in case we lost the lock unexpectedly and should stop validating ASAP.
+			OnStoppedLeading: func() {
+				controllerChan <- "stop"
+				klog.Infof("%v stopped leading", nodeID)
+			},
+			OnNewLeader: func(identity string) {
+				klog.Infof("%v started leading", identity)
+			},
+		},
+	}
+
+	leaderelection.RunOrDie(ctx, config)
 }
 
 func rpc(rpcURL string, method string) {
@@ -119,49 +158,6 @@ func startController(c chan string, rpcURL string) (*sync.WaitGroup) {
 		}
 	}()
 	return &wg
-}
-
-func newElector(ctx context.Context, controllerChan chan string, nodeID string, leaseNamespace string, leaseName string, kubeconfig string) {
-	clientset, err := newClientset(kubeconfig)
-	if err != nil {
-		klog.Fatalf("Failed to connect to cluster: %v", err)
-	}
-
-	var lock = &resourcelock.LeaseLock{
-		LeaseMeta: metav1.ObjectMeta{
-			Name: leaseName,
-			Namespace: leaseNamespace,
-		},
-		Client: clientset.CoordinationV1(),
-		LockConfig: resourcelock.ResourceLockConfig{
-			Identity: nodeID,
-		},
-	}
-
-	config := leaderelection.LeaderElectionConfig{
-		Lock: lock,
-		ReleaseOnCancel: true,
-		LeaseDuration: leaseDuration,
-		RenewDeadline: renewDeadline,
-		RetryPeriod: retryPeriod,
-		Callbacks: leaderelection.LeaderCallbacks{
-			OnStartedLeading: func(ctx context.Context) {
-				controllerChan <- "start"
-				klog.Infof("%v started leading", nodeID)
-			},
-			// If this is a graceful shutdown, the signal handler will have already sent "shutdown".
-			// Send "stop" below in case we lost the lock unexpectedly and should stop validating ASAP.
-			OnStoppedLeading: func() {
-				controllerChan <- "stop"
-				klog.Infof("%v stopped leading", nodeID)
-			},
-			OnNewLeader: func(identity string) {
-				klog.Infof("%v started leading", identity)
-			},
-		},
-	}
-
-	leaderelection.RunOrDie(ctx, config)
 }
 
 func newClientset(filename string) (*kubernetes.Clientset, error) {
