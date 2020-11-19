@@ -9,8 +9,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
-	
-	"github.com/apex/log"
+
 	"github.com/go-resty/resty/v2"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -19,9 +18,12 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/leaderelection"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
+	"k8s.io/klog/v2"
 )
 
 func main() {
+	klog.InitFlags(nil)
+
 	var kubeconfig string
 	var nodeID string
 	var leaseNamespace string
@@ -36,10 +38,10 @@ func main() {
 	flag.Parse()
 
 	if leaseNamespace == "" {
-		log.Fatal("-lease-namespace required")
+		klog.Fatal("-lease-namespace required")
 	}
 	if leaseName == "" {
-		log.Fatal("-lease required")
+		klog.Fatal("-lease required")
 	}
 
 	sigChan := make(chan os.Signal, 1)
@@ -51,7 +53,7 @@ func main() {
 
 	go func() {
 		<-sigChan
-		log.Info("Shutting down")
+		klog.Info("Shutting down")
 		controllerChan <- "shutdown"
 		controllerWg.Wait()
 		// Wait for shutdown to process before proceeding
@@ -68,18 +70,18 @@ func rpc(rpcURL string, method string) {
 		SetBody(map[string]interface{}{"jsonrpc": "2.0", "method": method, "params": []int{}, "id": 89999}).
 		Post(rpcURL)
 	if err != nil {
-		log.Warnf("HTTP %v failed: %v", method, err)
+		klog.Warningf("HTTP %v failed: %v", method, err)
 	} else {
 		var body map[string]interface{}
 		if err := json.Unmarshal(resp.Body(), &body); err != nil {
-			log.Warnf("failed to unmarshal response '%v': %v", resp, err)
+			klog.Warningf("failed to unmarshal response '%v': %v", resp, err)
 			return
 		}
 		if _, error := body["error"]; error {
-			log.Warnf("RPC %v failed: %v", method, resp)
+			klog.Warningf("RPC %v failed: %v", method, resp)
 			return
 		}
-		log.Infof("%v succeeded: %v", method, resp)
+		klog.Infof("%v succeeded: %v", method, resp)
 	}
 }
 
@@ -95,9 +97,9 @@ func startController(c chan string, rpcURL string) (*sync.WaitGroup) {
 		for {
 			select {
 			case <-ticker.C:
-				log.Infof("Refreshing desired validator state %v", op)
+				klog.Infof("Refreshing desired validator state %v", op)
 			case op = <-c:
-				log.Infof("New desired validator state %v", op)
+				klog.Infof("New desired validator state %v", op)
 			}
 
 			switch op {
@@ -117,7 +119,7 @@ func startController(c chan string, rpcURL string) (*sync.WaitGroup) {
 func newElector(ctx context.Context, controllerChan chan string, nodeID string, leaseNamespace string, leaseName string, kubeconfig string) {
 	clientset, err := newClientset(kubeconfig)
 	if err != nil {
-		log.WithError(err).Fatal("failed to connect to cluster")
+		klog.Fatalf("Failed to connect to cluster: %v", err)
 	}
 
 	var lock = &resourcelock.LeaseLock{
@@ -140,18 +142,16 @@ func newElector(ctx context.Context, controllerChan chan string, nodeID string, 
 		Callbacks: leaderelection.LeaderCallbacks{
 			OnStartedLeading: func(ctx context.Context) {
 				controllerChan <- "start"
-				log.WithField("id", nodeID).Info("started leading")
+				klog.Infof("%v started leading", nodeID)
 			},
 			// If this is a graceful shutdown, the signal handler will have already sent "shutdown".
 			// Send "stop" below in case we lost the lock unexpectedly and should stop validating ASAP.
 			OnStoppedLeading: func() {
 				controllerChan <- "stop"
-				log.WithField("id", nodeID).Info("stopped leading")
+				klog.Infof("%v stopped leading", nodeID)
 			},
 			OnNewLeader: func(identity string) {
-				log.WithField("id", nodeID).
-					WithField("leader", identity).
-					Info("new leader")
+				klog.Infof("%v started leading", identity)
 			},
 		},
 	}
