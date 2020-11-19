@@ -21,6 +21,11 @@ import (
 	"k8s.io/klog/v2"
 )
 
+var refreshPeriod = time.Second
+var leaseDuration = 15 * time.Second
+var renewDeadline = (2 * leaseDuration) / 3
+var retryPeriod = 2 * time.Second
+
 func main() {
 	klog.InitFlags(nil)
 
@@ -93,7 +98,7 @@ func startController(c chan string, rpcURL string) (*sync.WaitGroup) {
 		defer wg.Done()
 
 		op := "stop"
-		ticker := time.NewTicker(time.Second)
+		ticker := time.NewTicker(refreshPeriod)
 		for {
 			select {
 			case <-ticker.C:
@@ -136,9 +141,9 @@ func newElector(ctx context.Context, controllerChan chan string, nodeID string, 
 	config := leaderelection.LeaderElectionConfig{
 		Lock: lock,
 		ReleaseOnCancel: true,
-		LeaseDuration: 15 * time.Second,
-		RenewDeadline: 10 * time.Second,
-		RetryPeriod: 2 * time.Second,
+		LeaseDuration: leaseDuration,
+		RenewDeadline: renewDeadline,
+		RetryPeriod: retryPeriod,
 		Callbacks: leaderelection.LeaderCallbacks{
 			OnStartedLeading: func(ctx context.Context) {
 				controllerChan <- "start"
