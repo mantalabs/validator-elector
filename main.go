@@ -4,12 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
-	"fmt"
-	"net/http"
 	"os"
 	"os/signal"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 	
@@ -24,50 +21,44 @@ import (
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 )
 
-var leading int32
-
 func main() {
-	listen := flag.Bool("listen", true, "enable HTTP service")
-	elector := flag.Bool("elector", false, "enable participation in leader election")
-	port := flag.Int("port", 8080, "HTTP port")
-	
+	var kubeconfig string
+	var nodeID string
+	var leaseNamespace string
+	var leaseName string
+	var rpcURL string
 
-	var kubeconfig = flag.String("kubeconfig", "", "absolute path to the kubeconfig file")
-	var nodeID = flag.String("node-id", "", "node id used for leader election")
-
-	leaseNamespace := flag.String("lease-namespace", "", "namespace of lease object")
-	leaseName := flag.String("lease-name", "", "name of lease object")	
+	flag.StringVar(&kubeconfig, "kubeconfig", "", "absolute path to the kubeconfig file")
+	flag.StringVar(&nodeID, "node-id", "", "node id used for leader election")
+	flag.StringVar(&leaseNamespace, "lease-namespace", "", "namespace of lease object")
+	flag.StringVar(&leaseName, "lease-name", "", "name of lease object")
+	flag.StringVar(&rpcURL, "rpc-url", "http://127.0.0.1:8545", "RPC URL")
 	flag.Parse()
-	if *leaseNamespace == "" {
+
+	if leaseNamespace == "" {
 		log.Fatal("-lease-namespace required")
 	}
-	if *leaseName == "" {
+	if leaseName == "" {
 		log.Fatal("-lease required")
 	}
-	rpcURL := flag.String("rpc-url", "http://127.0.0.1:8545", "RPC URL")
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 	ctx, cancel := context.WithCancel(context.Background())
 
-	controllerChan := make(chan string)
-	controllerWg := startController(controllerChan, *rpcURL)
+	controllerChan := make(chan string, 1)
+	controllerWg := startController(controllerChan, rpcURL)
 
 	go func() {
 		<-sigChan
-		fmt.Println("Shutting down...")
+		log.Info("Shutting down")
 		controllerChan <- "shutdown"
 		controllerWg.Wait()
+		// Wait for shutdown to process before proceeding
 		cancel()
 	}()
 
-	if *elector {
-		newElector(ctx, controllerChan, *nodeID, *leaseNamespace, *leaseName, *kubeconfig)
-	}
-
-	if *listen {
-		newHTTP(ctx, *port)		
-	}
+	newElector(ctx, controllerChan, nodeID, leaseNamespace, leaseName, kubeconfig)
 }
 
 func rpc(rpcURL string, method string) {
@@ -148,14 +139,12 @@ func newElector(ctx context.Context, controllerChan chan string, nodeID string, 
 		RetryPeriod: 2 * time.Second,
 		Callbacks: leaderelection.LeaderCallbacks{
 			OnStartedLeading: func(ctx context.Context) {
-				atomic.StoreInt32(&leading, 1)
 				controllerChan <- "start"
 				log.WithField("id", nodeID).Info("started leading")
 			},
 			// If this is a graceful shutdown, the signal handler will have already sent "shutdown".
 			// Send "stop" below in case we lost the lock unexpectedly and should stop validating ASAP.
 			OnStoppedLeading: func() {
-				atomic.StoreInt32(&leading, 0)
 				controllerChan <- "stop"
 				log.WithField("id", nodeID).Info("stopped leading")
 			},
@@ -167,75 +156,7 @@ func newElector(ctx context.Context, controllerChan chan string, nodeID string, 
 		},
 	}
 
-	go func() {
-		leaderelection.RunOrDie(ctx, config)
-		// TOD(sbw): if this fails should abort/exit.
-	}()
-}
-
-func getHealthz(w http.ResponseWriter, r *http.Request) {
-	response := map[string]string{
-		"status": "ok",
-	}
-	content, err := json.Marshal(response)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(content)
-}
-
-func getLeading(w http.ResponseWriter, r *http.Request) {
-	response := map[string]string{
-		"status": "ok",
-		"result": fmt.Sprintf("%v", atomic.LoadInt32(&leading) == 1),
-	}
-	content, err := json.Marshal(response)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(content)
-}
-
-func newHTTP(ctx context.Context, port int) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", getHealthz)
-	mux.HandleFunc("/leading", getLeading)
-
-	log.WithField("port", port).
-		Info("HTTP listening")
-
-	srv := &http.Server{
-		Addr:    fmt.Sprintf(":%d", port),
-		Handler: mux,
-	}
-	go func() {
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.WithError(err).Fatal("listen and serve failed")
-		}
-	}()
-	log.Info("HTTP server started")
-
-	<-ctx.Done()
-
-	log.Info("shutting down HTTP server")
-
-	ctxShutDown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer func() {
-		cancel()
-	}()
-
-	if err := srv.Shutdown(ctxShutDown); err != nil {
-		log.WithError(err).Fatal("server shutdown failed")
-	}
-
-	log.Info("server exited properly")
-	return
+	leaderelection.RunOrDie(ctx, config)
 }
 
 func newClientset(filename string) (*kubernetes.Clientset, error) {
