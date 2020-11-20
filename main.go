@@ -129,7 +129,7 @@ func rpc(rpcURL string, method string) {
 	}
 }
 
-func startController(c chan string, rpcURL string) (*sync.WaitGroup) {
+func startController(controllerChan chan string, rpcURL string) (*sync.WaitGroup) {
 	var wg sync.WaitGroup
 	wg.Add(1)
 
@@ -142,7 +142,7 @@ func startController(c chan string, rpcURL string) (*sync.WaitGroup) {
 			select {
 			case <-ticker.C:
 				klog.Infof("Refreshing desired validator state %v", op)
-			case op = <-c:
+			case op = <-controllerChan:
 				klog.Infof("New desired validator state %v", op)
 			}
 
