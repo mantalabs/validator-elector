@@ -71,8 +71,8 @@ func main() {
 	go func() {
 		<-sigChan
 		klog.Info("Shutting down")
-		elector.Shutdown()
-		validator.Shutdown()
+		elector.shutdown()
+		validator.shutdown()
 		cancel()
 	}()
 
@@ -86,13 +86,13 @@ func main() {
 			klog.Infof("Checking validator state")
 		}
 
-		synced := validator.IsSynced()
+		synced := validator.isSynced()
 		if synced {
 			klog.Infof("Starting elector")
-			elector.Start(ctx)
+			elector.start(ctx)
 		} else {
 			klog.Infof("Stopping elector")
-			elector.Stop()
+			elector.stop()
 		}
 	}
 }
@@ -159,20 +159,20 @@ func newValidator(rpcURL string) (*Validator, error) {
 	return &validator, nil
 }
 
-func (validator *Validator) Start() {
+func (validator *Validator) start() {
 	validator.channel <- "start"
 }
 
-func (validator *Validator) Stop() {
+func (validator *Validator) stop() {
 	validator.channel <- "stop"
 }
 
-func (validator *Validator) Shutdown() {
+func (validator *Validator) shutdown() {
 	validator.channel <- "shutdown"
 	validator.wg.Wait()
 }
 
-func (validator *Validator) IsSynced() bool {
+func (validator *Validator) isSynced() bool {
 	// TODO(sbw): add RPC calls and "synced" logic
 	return true
 }
@@ -194,7 +194,7 @@ func newElector(clientset *kubernetes.Clientset, validator *Validator, leaseName
 	return &elector, nil
 }
 
-func (elector *Elector) Start(ctx context.Context) {
+func (elector *Elector) start(ctx context.Context) {
 	if elector.cancel != nil {
 		return
 	}
@@ -225,13 +225,13 @@ func (elector *Elector) Start(ctx context.Context) {
 			RetryPeriod: retryPeriod,
 			Callbacks: leaderelection.LeaderCallbacks{
 				OnStartedLeading: func(ctx context.Context) {
-					elector.validator.Start()
+					elector.validator.start()
 					klog.Infof("%v started leading", elector.nodeID)
 				},
 				// If this is a graceful shutdown, the signal handler will have already sent "shutdown".
 				// Send "stop" below in case we lost the lock unexpectedly and should stop validating ASAP.
 				OnStoppedLeading: func() {
-					elector.validator.Stop()
+					elector.validator.stop()
 					klog.Infof("%v stopped leading", elector.nodeID)
 				},
 				OnNewLeader: func(identity string) {
@@ -245,7 +245,7 @@ func (elector *Elector) Start(ctx context.Context) {
 	}()
 }
 
-func (elector *Elector) Stop() {
+func (elector *Elector) stop() {
 	if elector.cancel != nil {
 		elector.cancel()
 		elector.wg.Wait()
@@ -253,8 +253,8 @@ func (elector *Elector) Stop() {
 	}
 }
 
-func (elector *Elector) Shutdown() {
-	elector.Stop()
+func (elector *Elector) shutdown() {
+	elector.stop()
 	klog.Info("Elector shutdown")
 }
 
