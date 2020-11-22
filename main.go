@@ -97,7 +97,50 @@ func main() {
 	}
 }
 
-func rpc(rpcURL string, method string) {
+// Validator controls a Celo Validator via JSONRPC.
+type Validator struct {
+	channel chan string
+	wg *sync.WaitGroup
+}
+
+func newValidator(rpcURL string) (*Validator, error) {
+	validator := Validator{}
+	validator.channel = make(chan string, 1)
+	validator.wg = &sync.WaitGroup{}
+
+	// Loop continously and try to ensure the Celo Validator behavior/state matches
+	// the desired state. The loop handles intermittent JSONRPC failures.
+	validator.wg.Add(1)
+	go func() {
+		defer validator.wg.Done()
+
+		op := "stop"
+		ticker := time.NewTicker(refreshPeriod)
+		for {
+			select {
+			case <-ticker.C:
+				klog.Infof("Refreshing desired validator state %v", op)
+			case op = <-validator.channel:
+				klog.Infof("New desired validator state %v", op)
+			}
+
+			switch op {
+			case "shutdown":
+				validator.rpc(rpcURL, "istanbul_stopValidating")
+				klog.Info("Validator shutdown")
+				return
+			case "start":
+				validator.rpc(rpcURL, "istanbul_startValidating")
+			case "stop":
+				validator.rpc(rpcURL, "istanbul_stopValidating")
+			}
+		}
+	}()
+
+	return &validator, nil
+}
+
+func (validator *Validator) rpc(rpcURL string, method string) {
 	client := resty.New()
 
 	resp, err := client.R().
@@ -119,46 +162,6 @@ func rpc(rpcURL string, method string) {
 	}
 }
 
-type Validator struct {
-	channel chan string
-	wg *sync.WaitGroup
-}
-
-func newValidator(rpcURL string) (*Validator, error) {
-	validator := Validator{}
-	validator.channel = make(chan string, 1)
-	validator.wg = &sync.WaitGroup{}
-
-	validator.wg.Add(1)
-	go func() {
-		defer validator.wg.Done()
-
-		op := "stop"
-		ticker := time.NewTicker(refreshPeriod)
-		for {
-			select {
-			case <-ticker.C:
-				klog.Infof("Refreshing desired validator state %v", op)
-			case op = <-validator.channel:
-				klog.Infof("New desired validator state %v", op)
-			}
-
-			switch op {
-			case "shutdown":
-				rpc(rpcURL, "istanbul_stopValidating")
-				klog.Info("Validator shutdown")
-				return
-			case "start":
-				rpc(rpcURL, "istanbul_startValidating")
-			case "stop":
-				rpc(rpcURL, "istanbul_stopValidating")
-			}
-		}
-	}()
-
-	return &validator, nil
-}
-
 func (validator *Validator) start() {
 	validator.channel <- "start"
 }
@@ -177,6 +180,7 @@ func (validator *Validator) isSynced() bool {
 	return true
 }
 
+// Elector controls the Kubernetes leader election.
 type Elector struct {
 	clientset *kubernetes.Clientset
 	validator *Validator
@@ -203,9 +207,13 @@ func (elector *Elector) start(ctx context.Context) {
 	elector.cancel = cancel
 	elector.wg = &sync.WaitGroup{}
 
+	// Start a Kubernetes LeaderElector client to participate in the leader election.
+	// When the election elects this instance the code below sets the Validator state
+	// to "start", otherwise it sets the state to "stop".
 	elector.wg.Add(1)
 	go func() {
 		defer elector.wg.Done()
+		// https://pkg.go.dev/k8s.io/client-go/tools/leaderelection
 		lock := &resourcelock.LeaseLock{
 			LeaseMeta: metav1.ObjectMeta{
 				Name: elector.leaseName,
@@ -228,8 +236,6 @@ func (elector *Elector) start(ctx context.Context) {
 					elector.validator.start()
 					klog.Infof("%v started leading", elector.nodeID)
 				},
-				// If this is a graceful shutdown, the signal handler will have already sent "shutdown".
-				// Send "stop" below in case we lost the lock unexpectedly and should stop validating ASAP.
 				OnStoppedLeading: func() {
 					elector.validator.stop()
 					klog.Infof("%v stopped leading", elector.nodeID)
