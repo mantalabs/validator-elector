@@ -53,58 +53,48 @@ func main() {
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 	ctx, cancel := context.WithCancel(context.Background())
 
-	controllerChan := make(chan string, 1)
-	controllerWg := startController(controllerChan, rpcURL)
-
-	go func() {
-		<-sigChan
-		klog.Info("Shutting down")
-		controllerChan <- "shutdown"
-		controllerWg.Wait()
-		// Wait for shutdown to process before proceeding
-		cancel()
-	}()
+	validator, err := newValidator(rpcURL)
+	if err != nil {
+		klog.Fatalf("Failed to create Validator: %v", err)
+	}
 
 	clientset, err := newClientset(kubeconfig)
 	if err != nil {
 		klog.Fatalf("Failed to connect to cluster: %v", err)
 	}
 
-	lock := &resourcelock.LeaseLock{
-		LeaseMeta: metav1.ObjectMeta{
-			Name: leaseName,
-			Namespace: leaseNamespace,
-		},
-		Client: clientset.CoordinationV1(),
-		LockConfig: resourcelock.ResourceLockConfig{
-			Identity: nodeID,
-		},
+	elector, err := newElector(clientset, validator, leaseName, leaseNamespace, nodeID)
+	if err != nil {
+		klog.Fatalf("Failed to create Elector: %v", err)
 	}
 
-	config := leaderelection.LeaderElectionConfig{
-		Lock: lock,
-		ReleaseOnCancel: true,
-		LeaseDuration: leaseDuration,
-		RenewDeadline: renewDeadline,
-		RetryPeriod: retryPeriod,
-		Callbacks: leaderelection.LeaderCallbacks{
-			OnStartedLeading: func(ctx context.Context) {
-				controllerChan <- "start"
-				klog.Infof("%v started leading", nodeID)
-			},
-			// If this is a graceful shutdown, the signal handler will have already sent "shutdown".
-			// Send "stop" below in case we lost the lock unexpectedly and should stop validating ASAP.
-			OnStoppedLeading: func() {
-				controllerChan <- "stop"
-				klog.Infof("%v stopped leading", nodeID)
-			},
-			OnNewLeader: func(identity string) {
-				klog.Infof("%v started leading", identity)
-			},
-		},
-	}
+	go func() {
+		<-sigChan
+		klog.Info("Shutting down")
+		elector.Shutdown()
+		validator.Shutdown()
+		cancel()
+	}()
 
-	leaderelection.RunOrDie(ctx, config)
+	ticker := time.NewTicker(refreshPeriod)
+	for {
+		select {
+		case <-ctx.Done():
+			klog.Info("Exiting main")
+			return
+		case <-ticker.C:
+			klog.Infof("Checking validator state")
+		}
+
+		synced := validator.IsSynced()
+		if synced {
+			klog.Infof("Starting elector")
+			elector.Start(ctx)
+		} else {
+			klog.Infof("Stopping elector")
+			elector.Stop()
+		}
+	}
 }
 
 func rpc(rpcURL string, method string) {
@@ -129,12 +119,19 @@ func rpc(rpcURL string, method string) {
 	}
 }
 
-func startController(controllerChan chan string, rpcURL string) (*sync.WaitGroup) {
-	var wg sync.WaitGroup
-	wg.Add(1)
+type Validator struct {
+	channel chan string
+	wg *sync.WaitGroup
+}
 
+func newValidator(rpcURL string) (*Validator, error) {
+	validator := Validator{}
+	validator.channel = make(chan string, 1)
+	validator.wg = &sync.WaitGroup{}
+
+	validator.wg.Add(1)
 	go func() {
-		defer wg.Done()
+		defer validator.wg.Done()
 
 		op := "stop"
 		ticker := time.NewTicker(refreshPeriod)
@@ -142,13 +139,14 @@ func startController(controllerChan chan string, rpcURL string) (*sync.WaitGroup
 			select {
 			case <-ticker.C:
 				klog.Infof("Refreshing desired validator state %v", op)
-			case op = <-controllerChan:
+			case op = <-validator.channel:
 				klog.Infof("New desired validator state %v", op)
 			}
 
 			switch op {
 			case "shutdown":
 				rpc(rpcURL, "istanbul_stopValidating")
+				klog.Info("Validator shutdown")
 				return
 			case "start":
 				rpc(rpcURL, "istanbul_startValidating")
@@ -157,7 +155,107 @@ func startController(controllerChan chan string, rpcURL string) (*sync.WaitGroup
 			}
 		}
 	}()
-	return &wg
+
+	return &validator, nil
+}
+
+func (validator *Validator) Start() {
+	validator.channel <- "start"
+}
+
+func (validator *Validator) Stop() {
+	validator.channel <- "stop"
+}
+
+func (validator *Validator) Shutdown() {
+	validator.channel <- "shutdown"
+	validator.wg.Wait()
+}
+
+func (validator *Validator) IsSynced() bool {
+	// TODO(sbw): add RPC calls and "synced" logic
+	return true
+}
+
+type Elector struct {
+	clientset *kubernetes.Clientset
+	validator *Validator
+
+	leaseName string
+	leaseNamespace string
+	nodeID string
+
+	wg *sync.WaitGroup
+	cancel context.CancelFunc
+}
+
+func newElector(clientset *kubernetes.Clientset, validator *Validator, leaseName string, leaseNamespace string, nodeID string) (*Elector, error) {
+	elector := Elector{clientset, validator, leaseName, leaseNamespace, nodeID, nil, nil}
+	return &elector, nil
+}
+
+func (elector *Elector) Start(ctx context.Context) {
+	if elector.cancel != nil {
+		return
+	}
+
+	ctx, cancel := context.WithCancel(ctx)
+	elector.cancel = cancel
+	elector.wg = &sync.WaitGroup{}
+
+	elector.wg.Add(1)
+	go func() {
+		defer elector.wg.Done()
+		lock := &resourcelock.LeaseLock{
+			LeaseMeta: metav1.ObjectMeta{
+				Name: elector.leaseName,
+				Namespace: elector.leaseNamespace,
+			},
+			Client: elector.clientset.CoordinationV1(),
+			LockConfig: resourcelock.ResourceLockConfig{
+				Identity: elector.nodeID,
+			},
+		}
+
+		config := leaderelection.LeaderElectionConfig{
+			Lock: lock,
+			ReleaseOnCancel: true,
+			LeaseDuration: leaseDuration,
+			RenewDeadline: renewDeadline,
+			RetryPeriod: retryPeriod,
+			Callbacks: leaderelection.LeaderCallbacks{
+				OnStartedLeading: func(ctx context.Context) {
+					elector.validator.Start()
+					klog.Infof("%v started leading", elector.nodeID)
+				},
+				// If this is a graceful shutdown, the signal handler will have already sent "shutdown".
+				// Send "stop" below in case we lost the lock unexpectedly and should stop validating ASAP.
+				OnStoppedLeading: func() {
+					elector.validator.Stop()
+					klog.Infof("%v stopped leading", elector.nodeID)
+				},
+				OnNewLeader: func(identity string) {
+					klog.Infof("%v started leading", identity)
+				},
+			},
+		}
+
+		leaderelection.RunOrDie(ctx, config)
+		klog.Info("Elector stopped")
+	}()
+}
+
+func (elector *Elector) Stop() {
+	if elector.cancel != nil {
+		elector.cancel()
+		elector.wg.Wait()
+		elector.cancel = nil
+	}
+}
+
+func (elector *Elector) Shutdown() {
+	elector.Stop()
+	klog.Info("Elector shutdown")
 }
 
 func newClientset(filename string) (*kubernetes.Clientset, error) {
