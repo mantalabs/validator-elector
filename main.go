@@ -101,10 +101,12 @@ func main() {
 type Validator struct {
 	channel chan string
 	wg *sync.WaitGroup
+	rpcURL string
 }
 
 func newValidator(rpcURL string) (*Validator, error) {
 	validator := Validator{}
+	validator.rpcURL = rpcURL
 	validator.channel = make(chan string, 1)
 	validator.wg = &sync.WaitGroup{}
 
@@ -126,13 +128,13 @@ func newValidator(rpcURL string) (*Validator, error) {
 
 			switch op {
 			case "shutdown":
-				validator.rpc(rpcURL, "istanbul_stopValidating")
+				validator.rpc("istanbul_stopValidating")
 				klog.Info("Validator shutdown")
 				return
 			case "start":
-				validator.rpc(rpcURL, "istanbul_startValidating")
+				validator.rpc("istanbul_startValidating")
 			case "stop":
-				validator.rpc(rpcURL, "istanbul_stopValidating")
+				validator.rpc("istanbul_stopValidating")
 			}
 		}
 	}()
@@ -140,12 +142,12 @@ func newValidator(rpcURL string) (*Validator, error) {
 	return &validator, nil
 }
 
-func (validator *Validator) rpc(rpcURL string, method string) {
+func (validator *Validator) rpc(method string) {
 	client := resty.New()
 
 	resp, err := client.R().
 		SetBody(map[string]interface{}{"jsonrpc": "2.0", "method": method, "params": []int{}, "id": 89999}).
-		Post(rpcURL)
+		Post(validator.rpcURL)
 	if err != nil {
 		klog.Warningf("HTTP %v failed: %v", method, err)
 	} else {
