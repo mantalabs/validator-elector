@@ -97,38 +97,21 @@ func main() {
 	}
 }
 
-func rpc(rpcURL string, method string) {
-	client := resty.New()
-
-	resp, err := client.R().
-		SetBody(map[string]interface{}{"jsonrpc": "2.0", "method": method, "params": []int{}, "id": 89999}).
-		Post(rpcURL)
-	if err != nil {
-		klog.Warningf("HTTP %v failed: %v", method, err)
-	} else {
-		var body map[string]interface{}
-		if err := json.Unmarshal(resp.Body(), &body); err != nil {
-			klog.Warningf("failed to unmarshal response '%v': %v", resp, err)
-			return
-		}
-		if _, error := body["error"]; error {
-			klog.Warningf("RPC %v failed: %v", method, resp)
-			return
-		}
-		klog.Infof("%v succeeded: %v", method, resp)
-	}
-}
-
+// Validator controls a Celo Validator via JSONRPC.
 type Validator struct {
 	channel chan string
 	wg *sync.WaitGroup
+	rpcURL string
 }
 
 func newValidator(rpcURL string) (*Validator, error) {
 	validator := Validator{}
+	validator.rpcURL = rpcURL
 	validator.channel = make(chan string, 1)
 	validator.wg = &sync.WaitGroup{}
 
+	// Loop continously and try to ensure the Celo Validator behavior/state matches
+	// the desired state. The loop handles intermittent JSONRPC failures.
 	validator.wg.Add(1)
 	go func() {
 		defer validator.wg.Done()
@@ -145,18 +128,40 @@ func newValidator(rpcURL string) (*Validator, error) {
 
 			switch op {
 			case "shutdown":
-				rpc(rpcURL, "istanbul_stopValidating")
+				validator.rpc("istanbul_stopValidating")
 				klog.Info("Validator shutdown")
 				return
 			case "start":
-				rpc(rpcURL, "istanbul_startValidating")
+				validator.rpc("istanbul_startValidating")
 			case "stop":
-				rpc(rpcURL, "istanbul_stopValidating")
+				validator.rpc("istanbul_stopValidating")
 			}
 		}
 	}()
 
 	return &validator, nil
+}
+
+func (validator *Validator) rpc(method string) {
+	client := resty.New()
+
+	resp, err := client.R().
+		SetBody(map[string]interface{}{"jsonrpc": "2.0", "method": method, "params": []int{}, "id": 89999}).
+		Post(validator.rpcURL)
+	if err != nil {
+		klog.Warningf("HTTP %v failed: %v", method, err)
+	} else {
+		var body map[string]interface{}
+		if err := json.Unmarshal(resp.Body(), &body); err != nil {
+			klog.Warningf("failed to unmarshal response '%v': %v", resp, err)
+			return
+		}
+		if _, error := body["error"]; error {
+			klog.Warningf("RPC %v failed: %v", method, resp)
+			return
+		}
+		klog.Infof("%v succeeded: %v", method, resp)
+	}
 }
 
 func (validator *Validator) start() {
@@ -177,6 +182,7 @@ func (validator *Validator) isSynced() bool {
 	return true
 }
 
+// Elector controls the Kubernetes leader election.
 type Elector struct {
 	clientset *kubernetes.Clientset
 	validator *Validator
@@ -203,9 +209,13 @@ func (elector *Elector) start(ctx context.Context) {
 	elector.cancel = cancel
 	elector.wg = &sync.WaitGroup{}
 
+	// Start a Kubernetes LeaderElector client to participate in the leader election.
+	// When the election elects this instance the code below sets the Validator state
+	// to "start", otherwise it sets the state to "stop".
 	elector.wg.Add(1)
 	go func() {
 		defer elector.wg.Done()
+		// https://pkg.go.dev/k8s.io/client-go/tools/leaderelection
 		lock := &resourcelock.LeaseLock{
 			LeaseMeta: metav1.ObjectMeta{
 				Name: elector.leaseName,
@@ -228,8 +238,6 @@ func (elector *Elector) start(ctx context.Context) {
 					elector.validator.start()
 					klog.Infof("%v started leading", elector.nodeID)
 				},
-				// If this is a graceful shutdown, the signal handler will have already sent "shutdown".
-				// Send "stop" below in case we lost the lock unexpectedly and should stop validating ASAP.
 				OnStoppedLeading: func() {
 					elector.validator.stop()
 					klog.Infof("%v stopped leading", elector.nodeID)
