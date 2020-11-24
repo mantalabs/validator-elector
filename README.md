@@ -22,6 +22,12 @@ make a JSONRPC request to the Celo validator to stop validation.
 
 [e2e](./e2e) has an example usage.
 
+## Testing
+
+```
+e2e/run.py
+```
+
 ## Related
 
 * [leaderelection Documentation](https://pkg.go.dev/k8s.io/client-go/tools/leaderelection)
