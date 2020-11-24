@@ -84,7 +84,7 @@ def main(delete_cluster=None,
         kubectl('describe', 'statefulset/validator')
         raise error
 
-    print('Success!')
+    print('\n\nSuccess!')
 
 
 def parse_args():
