@@ -11,7 +11,8 @@ def main(delete_cluster=None,
          docker_build=None,
          kind_config=None,
          kind_image=None,
-         kubeconfig=None):
+         kubeconfig=None,
+         startup_delay=None):
 
     def kubectl(*args):
         args = ['kubectl', *args]
@@ -52,8 +53,12 @@ def main(delete_cluster=None,
     kubectl('apply', '-f', 'e2e/rbac.yaml')
     kubectl('apply', '-f', 'e2e/statefulset-tests.yaml')
 
+    # Give things some time to start.
+    print(f'\n\n\nWaiting {startup_delay} seconds ...\n\n\n')
+    time.sleep(startup_delay)
+
     #
-    # TODO: make some assertions
+    # Make some (kind of lame) assertions
     #
 
 
@@ -85,6 +90,9 @@ def parse_args():
     parser.add_argument('--no-docker-build',
                         dest='docker_build',
                         action='store_false')
+    parser.add_argument('--startup-delay',
+                        default=30,
+                        type=float)
 
     parser.set_defaults(
         delete_cluster=True,
