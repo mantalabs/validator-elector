@@ -3,6 +3,7 @@ import argparse
 import atexit
 import os
 import subprocess
+import time
 
 
 def main(delete_cluster=None,
@@ -54,7 +55,7 @@ def main(delete_cluster=None,
     kubectl('apply', '-f', 'e2e/statefulset-tests.yaml')
 
     # Give things some time to start.
-    print(f'\n\n\nWaiting {startup_delay} seconds ...\n\n\n')
+    print(f'\n\nWaiting {startup_delay} seconds ...\n\n')
     time.sleep(startup_delay)
 
     #
