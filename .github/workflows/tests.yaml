@@ -17,3 +17,9 @@ jobs:
           go-version: '1.15'
       - run: go mod download
       - run: go build
+  test-e2e:
+    runs-on: ubuntu-latest
+    name: E2E
+    steps:
+      - uses: actions/checkout@v2
+      - run: ./e2e/run.py
