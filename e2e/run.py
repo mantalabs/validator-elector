@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 import argparse
 import atexit
+import json
 import os
+import re
 import subprocess
 import time
 
@@ -15,17 +17,22 @@ def main(delete_cluster=None,
          kubeconfig=None,
          startup_delay=None):
 
-    def kubectl(*args):
+    def kubectl(*args, return_output=False, json_output=False):
         args = ['kubectl', *args]
         env = {**os.environ, 'KUBECONFIG': kubeconfig}
-        subprocess.check_call(args, env=env)
+        if json_output:
+            args.extend(['-o', 'json'])
+            output = subprocess.check_output(args, env=env)
+            return json.loads(output)
+        elif return_output:
+            return subprocess.check_output(args, env=env).decode('utf-8')
 
+        return subprocess.check_call(args, env=env)
 
     def kind(*args):
         args = ['kind', *args, '--name', cluster_name]
         env = {**os.environ, 'KUBECONFIG': kubeconfig}
         subprocess.check_call(args, env=env)
-
 
     def atexit_delete_cluster():
         try:
@@ -61,6 +68,23 @@ def main(delete_cluster=None,
     #
     # Make some (kind of lame) assertions
     #
+    try:
+        # Ensure things are running.
+        validator_statefulset = kubectl('get', 'statefulset/validator', '-o', 'json', json_output=True)
+        validator_replicas = validator_statefulset['status']['replicas']
+        validator_ready_replicas = validator_statefulset['status']['readyReplicas']
+        assert validator_replicas == validator_ready_replicas
+
+        # Search for a log message that indicates the elector is communicating with the validator.
+        elector_log = kubectl('logs', 'validator-0', 'elector', return_output=True)
+        assert re.search('Block .+ is from', elector_log)
+
+    except AssertionError as error:
+        print('\n\nAssertion failed!\n\n', error)
+        kubectl('describe', 'statefulset/validator')
+        raise error
+
+    print('Success!')
 
 
 def parse_args():
