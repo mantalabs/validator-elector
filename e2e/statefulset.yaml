@@ -1,29 +1,44 @@
+---
+
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
-  name: validator-elector
+  name: validator
 spec:
+  serviceName: validator
+  replicas: 2
   selector:
     matchLabels:
-      app: validator-elector
-  replicas: 2
+      app: validator
+  volumeClaimTemplates:
+    - metadata:
+        name: celo-data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 64Gi
   template:
     metadata:
       labels:
-        app: validator-elector
+        app: validator
     spec:
       automountServiceAccountToken: true
-      serviceAccount: validator-elector
-      serviceAccountName: validator-elector
+      serviceAccount: validator
+      serviceAccountName: validator
+      volumes:
+        - name: celo-data
+          persistentVolumeClaim:
+            claimName: celo-data
       containers:
-        - name: validator-elector
-          image: validator-elector:test
+        - name: elector
+          image: mantalabs/validator-elector:latest
+          imagePullPolicy: Always
           args:
             - -node-id=$(POD_NAME)
             - -lease-namespace=$(POD_NAMESPACE)
             - -lease-name=validator-lease
-            - -elector
-            - -listen
           env:
             - name: POD_NAME
               valueFrom:
@@ -36,15 +51,18 @@ spec:
                   apiVersion: v1
                   fieldPath: metadata.namespace
         - name: celo
-          image: us.gcr.io/celo-org/geth:baklava
+          image: us.gcr.io/celo-org/geth:1.2.1
           args:
             - --verbosity=3
             - --syncmode=full
             - --rpc
             - --rpcaddr=0.0.0.0
-            - --rpcapi=eth,net,web3,debug,admin,personal
+            - --rpcapi=eth,net,web3,debug,admin,personal,istanbul
             - --light.serve=90
             - --light.maxpeers=1000
             - --maxpeers=1100
             - --nousb
             - --baklava
+          volumeMounts:
+            - name: celo-data
+              mountPath: /root/.celo
