@@ -62,7 +62,7 @@ def main(delete_cluster=None,
     kubectl('apply', '-f', 'e2e/statefulset-tests.yaml')
 
     # Give things some time to start.
-    print(f'\n\nWaiting {startup_delay} seconds ...\n\n')
+    print(f'\n\nWaiting {startup_delay} seconds ...')
     time.sleep(startup_delay)
 
     #
@@ -84,7 +84,7 @@ def main(delete_cluster=None,
         kubectl('describe', 'statefulset/validator')
         raise error
 
-    print('\n\nSuccess!')
+    print('\nSuccess!\n')
 
 
 def parse_args():
