@@ -7,10 +7,11 @@ on Kubernetes.
 ## Usage
 
 Add a validator-elector container to run as a sidecar to each `Pod`
-running a Celo validator container. The validator-elector containers
-race to acquire a lock. The validator-elector container that
-successfully acquires the lock makes an JSONRPC request to the Celo
-validator to start validation.
+running a Celo validator container. If the the Celo validator's
+current block is recent, the validator-elector sidecar will race to
+acquire a lock. The validator-elector container that successfully
+acquires the lock makes an JSONRPC request to the Celo validator to
+start validation.
 
 The validator-elector periodically renews the lock. If the
 validator-elector fails to renew the lock (e.g., `Node` crash) within
@@ -33,6 +34,5 @@ e2e/run.py
 * [leaderelection Documentation](https://pkg.go.dev/k8s.io/client-go/tools/leaderelection)
 * [Leader Election Example](https://github.com/kubernetes/client-go/tree/master/examples/leader-election)
 * [Lease v1](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.19/#lease-v1-coordination-k8s-io)
-* [Simple Leader Election with Kubernetes and Docker (code)](https://github.com/kubernetes-retired/contrib/tree/master/election)
-* [Simple leader election with Kubernetes and Docker (blog)](https://kubernetes.io/blog/2016/01/simple-leader-election-with-kubernetes/)
-* [Leader Election inside Kubernetes](https://carlosbecker.com/posts/k8s-leader-election)
+* [Hotswapping Validator Nodes](https://docs.celo.org/validator-guide/node-upgrades#hotswapping-validator-nodes)
+* [celo-blockchain 1.2.0 Release Notes](https://github.com/celo-org/celo-blockchain/releases/tag/v1.2.0)
