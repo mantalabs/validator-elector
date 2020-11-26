@@ -38,12 +38,14 @@ func main() {
 	var leaseNamespace string
 	var leaseName string
 	var rpcURL string
+	var allowPrimary bool
 
 	flag.StringVar(&kubeconfig, "kubeconfig", "", "absolute path to the kubeconfig file")
 	flag.StringVar(&nodeID, "node-id", "", "node id used for leader election")
 	flag.StringVar(&leaseNamespace, "lease-namespace", "", "namespace of lease object")
 	flag.StringVar(&leaseName, "lease-name", "", "name of lease object")
 	flag.StringVar(&rpcURL, "rpc-url", "http://127.0.0.1:8545", "RPC URL")
+	flag.BoolVar(&allowPrimary, "allow-primary", true, "If holding the lock, run the validator as a primary")
 	flag.Parse()
 
 	if leaseNamespace == "" {
@@ -57,7 +59,7 @@ func main() {
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 	ctx, cancel := context.WithCancel(context.Background())
 
-	validator, err := newValidator(rpcURL)
+	validator, err := newValidator(rpcURL, allowPrimary)
 	if err != nil {
 		klog.Fatalf("Failed to create Validator: %v", err)
 	}
@@ -112,7 +114,7 @@ type Validator struct {
 	rpcURL string
 }
 
-func newValidator(rpcURL string) (*Validator, error) {
+func newValidator(rpcURL string, allowPrimary bool) (*Validator, error) {
 	validator := Validator{}
 	validator.rpcURL = rpcURL
 	validator.channel = make(chan string, 1)
@@ -140,7 +142,9 @@ func newValidator(rpcURL string) (*Validator, error) {
 				klog.Info("Validator shutdown")
 				return
 			case "start":
-				validator.rpc("istanbul_startValidating", nil)
+				if allowPrimary {
+					validator.rpc("istanbul_startValidating", nil)
+				}
 			case "stop":
 				validator.rpc("istanbul_stopValidating", nil)
 			}
