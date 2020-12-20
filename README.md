@@ -1,8 +1,9 @@
 # validator-elector
 
-validator-elector helps run a highly available [Celo
+validator-elector helps run a [Celo
 validator](https://docs.celo.org/getting-started/mainnet/running-a-validator-in-mainnet)
-on Kubernetes.
+on Kubernetes with automatic failover. You can use validator-elector
+to increase availability or enable rolling deployments.
 
 ## Usage
 
