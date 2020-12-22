@@ -121,20 +121,23 @@ func main() {
 			klog.Info("Exiting main")
 			return
 		case <-ticker.C:
-			klog.Infof("Checking validator state")
+			break
 		}
 
 		synced, err := validator.isSynced()
-
 		if err != nil {
 			klog.Warningf("Error getting validator status: %v", err)
 			elector.stop()
 		} else if synced {
-			klog.Infof("Validator is synced, starting elector")
-			elector.start(ctx)
+			if !elector.Running() {
+				klog.Infof("Validator is synced, starting elector")
+				elector.start(ctx)
+			}
 		} else {
-			klog.Infof("Validator is not synced, stopping elector")
-			elector.stop()
+			if elector.Running() {
+				klog.Infof("Validator is not synced, stopping elector")
+				elector.stop()
+			}
 		}
 	}
 }
@@ -163,7 +166,7 @@ func newValidator(rpcURL string, allowPrimary bool) (*Validator, error) {
 		for {
 			select {
 			case <-ticker.C:
-				klog.Infof("Refreshing desired validator state %v", op)
+				break
 			case op = <-validator.channel:
 				klog.Infof("New desired validator state %v", op)
 			}
@@ -267,11 +270,13 @@ func (validator *Validator) isSynced() (bool, error) {
 	blockTime := time.Unix(timestamp, 0)
 	now := time.Now()
 
-	klog.Infof("Block %v is from %v", block, blockTime)
 	diff := now.Sub(blockTime)
 	if diff < maxAgeOfLastBlock {
 		return true, nil
 	}
+	blockNumber, _ := strconv.ParseUint(block, 0, 64)
+	klog.Infof("Block %v is from %v", blockNumber, blockTime)
+
 	return false, nil
 }
 
@@ -293,8 +298,12 @@ func newElector(clientset *kubernetes.Clientset, validator *Validator, leaseName
 	return &elector, nil
 }
 
+func (elector *Elector) Running() bool {
+	return elector.cancel != nil
+}
+
 func (elector *Elector) start(ctx context.Context) {
-	if elector.cancel != nil {
+	if elector.Running() {
 		return
 	}
 
@@ -347,7 +356,7 @@ func (elector *Elector) start(ctx context.Context) {
 }
 
 func (elector *Elector) stop() {
-	if elector.cancel != nil {
+	if elector.Running() {
 		elector.cancel()
 		elector.wg.Wait()
 		elector.cancel = nil
