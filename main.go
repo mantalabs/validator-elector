@@ -84,7 +84,7 @@ func main() {
 		klog.Fatal("-lease-namespace required")
 	}
 	if leaseName == "" {
-		klog.Fatal("-lease required")
+		klog.Fatal("-lease-name required")
 	}
 
 	sigChan := make(chan os.Signal, 1)
@@ -109,7 +109,7 @@ func main() {
 	go func() {
 		<-sigChan
 		klog.Info("Shutting down")
-		elector.shutdown()
+		elector.Shutdown()
 		validator.shutdown()
 		cancel()
 	}()
@@ -127,16 +127,16 @@ func main() {
 		synced, err := validator.isSynced()
 		if err != nil {
 			klog.Warningf("Error getting validator status: %v", err)
-			elector.stop()
+			elector.Stop()
 		} else if synced {
 			if !elector.Running() {
 				klog.Infof("Validator is synced, starting elector")
-				elector.start(ctx)
+				elector.Start(ctx)
 			}
 		} else {
 			if elector.Running() {
 				klog.Infof("Validator is not synced, stopping elector")
-				elector.stop()
+				elector.Stop()
 			}
 		}
 	}
@@ -302,7 +302,7 @@ func (elector *Elector) Running() bool {
 	return elector.cancel != nil
 }
 
-func (elector *Elector) start(ctx context.Context) {
+func (elector *Elector) Start(ctx context.Context) {
 	if elector.Running() {
 		return
 	}
@@ -317,45 +317,59 @@ func (elector *Elector) start(ctx context.Context) {
 	elector.wg.Add(1)
 	go func() {
 		defer elector.wg.Done()
-		// https://pkg.go.dev/k8s.io/client-go/tools/leaderelection
-		lock := &resourcelock.LeaseLock{
-			LeaseMeta: metav1.ObjectMeta{
-				Name:      elector.leaseName,
-				Namespace: elector.leaseNamespace,
-			},
-			Client: elector.clientset.CoordinationV1(),
-			LockConfig: resourcelock.ResourceLockConfig{
-				Identity: elector.nodeID,
-			},
-		}
+		for {
+			// https://pkg.go.dev/k8s.io/client-go/tools/leaderelection
+			lock := &resourcelock.LeaseLock{
+				LeaseMeta: metav1.ObjectMeta{
+					Name:      elector.leaseName,
+					Namespace: elector.leaseNamespace,
+				},
+				Client: elector.clientset.CoordinationV1(),
+				LockConfig: resourcelock.ResourceLockConfig{
+					Identity: elector.nodeID,
+				},
+			}
 
-		config := leaderelection.LeaderElectionConfig{
-			Lock:            lock,
-			ReleaseOnCancel: true,
-			LeaseDuration:   leaseDuration,
-			RenewDeadline:   renewDeadline,
-			RetryPeriod:     retryPeriod,
-			Callbacks: leaderelection.LeaderCallbacks{
-				OnStartedLeading: func(ctx context.Context) {
-					elector.validator.start()
-					klog.Infof("%v started leading", elector.nodeID)
+			config := leaderelection.LeaderElectionConfig{
+				Lock:            lock,
+				ReleaseOnCancel: true,
+				LeaseDuration:   leaseDuration,
+				RenewDeadline:   renewDeadline,
+				RetryPeriod:     retryPeriod,
+				Callbacks: leaderelection.LeaderCallbacks{
+					OnStartedLeading: func(ctx context.Context) {
+						elector.validator.start()
+						klog.Infof("%v started leading", elector.nodeID)
+					},
+					OnStoppedLeading: func() {
+						elector.validator.stop()
+						klog.Infof("%v stopped leading", elector.nodeID)
+					},
+					OnNewLeader: func(identity string) {
+						klog.Infof("%v started leading", identity)
+					},
 				},
-				OnStoppedLeading: func() {
-					elector.validator.stop()
-					klog.Infof("%v stopped leading", elector.nodeID)
-				},
-				OnNewLeader: func(identity string) {
-					klog.Infof("%v started leading", identity)
-				},
-			},
-		}
+			}
 
-		leaderelection.RunOrDie(ctx, config)
-		klog.Info("Elector stopped")
+			leaderelection.RunOrDie(ctx, config)
+
+			select {
+			case <-ctx.Done():
+				klog.Info("Elector stopped")
+				return
+			default:
+				// Not canceled, so retry RunOrDie. There are some conditions that cause RunOrDie
+				// to exit. Run RunOrDie again when that happens.
+				klog.Warning("leaderelection.RunOrDie exited. Re-trying.")
+				// Delay a bit avoid retrying superfluously when there's an ongoing transient cluster issue.
+				time.Sleep(retryPeriod)
+				continue
+			}
+		}
 	}()
 }
 
-func (elector *Elector) stop() {
+func (elector *Elector) Stop() {
 	if elector.Running() {
 		elector.cancel()
 		elector.wg.Wait()
@@ -363,8 +377,8 @@ func (elector *Elector) stop() {
 	}
 }
 
-func (elector *Elector) shutdown() {
-	elector.stop()
+func (elector *Elector) Shutdown() {
+	elector.Stop()
 	klog.Info("Elector shutdown")
 }
 
