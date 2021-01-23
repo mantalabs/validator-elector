@@ -361,6 +361,8 @@ func (elector *Elector) Start(ctx context.Context) {
 				// Not canceled, so retry RunOrDie. There are some conditions that cause RunOrDie
 				// to exit. Run RunOrDie again when that happens.
 				klog.Warning("leaderelection.RunOrDie exited. Re-trying.")
+				// Delay a bit avoid retrying superfluously when there's an ongoing transient cluster issue.
+				time.Sleep(retryPeriod)
 				continue
 			}
 		}
