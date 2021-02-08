@@ -29,6 +29,10 @@ var renewDeadline = (2 * leaseDuration) / 3
 var retryPeriod = 2 * time.Second
 var maxAgeOfLastBlock = 60 * time.Second
 
+// The controller waits this long to start validating once it acquire the lock. This
+// is to mitigate the risk of doubling signing.
+var startValidationDelay = 20 * time.Second
+
 type ErrorResponse struct {
 	Jsonrpc string
 	Id      int
@@ -162,14 +166,22 @@ func newValidator(rpcURL string, allowPrimary bool) (*Validator, error) {
 		defer validator.wg.Done()
 
 		op := "stop"
+		opStartTime := time.Now()
+
 		ticker := time.NewTicker(refreshPeriod)
 		for {
 			select {
 			case <-ticker.C:
 				break
-			case op = <-validator.channel:
-				klog.Infof("New desired validator state %v", op)
+			case newOp := <-validator.channel:
+				if newOp != op {
+					opStartTime = time.Now()
+					op = newOp
+					klog.Infof("New desired validator state %v", op)
+				}
 			}
+
+			elapsedOpTime := time.Now().Sub(opStartTime)
 
 			switch op {
 			case "shutdown":
@@ -177,7 +189,7 @@ func newValidator(rpcURL string, allowPrimary bool) (*Validator, error) {
 				klog.Info("Validator shutdown")
 				return
 			case "start":
-				if allowPrimary {
+				if allowPrimary && elapsedOpTime > startValidationDelay {
 					validator.rpc("istanbul_startValidating", nil, IstanbulStartValidating{})
 				}
 			case "stop":
