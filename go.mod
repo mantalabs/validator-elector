@@ -1,4 +1,4 @@
-module github.com/silasbw/validator-elector
+module github.com/mantalabs/validator-elector
 
 go 1.14
 
