@@ -1,0 +1,87 @@
+run:
+  timeout: 5m
+
+linters-settings:
+  goconst:
+    min-len: 3
+    min-occurrences: 3
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - experimental
+      - opinionated
+      - performance
+      - style
+    disabled-checks:
+      - dupImport
+      - ifElseChain
+      - octalLiteral
+      - whyNoLint
+      - importShadow
+      - unnamedResult
+      - unnecessaryBlock
+    settings:
+      rangeValCopy:
+        sizeThreshold: 512
+      hugeParam:
+        sizeThreshold: 512
+  gocyclo:
+    min-complexity: 16
+  lll:
+    line-length: 120
+  misspell:
+    locale: US
+
+linters:
+  disable-all: true
+  enable:
+    - asciicheck
+    - bodyclose
+    - deadcode
+    - depguard
+    - dogsled
+    - dupl
+    - errcheck
+    - errorlint
+    - exhaustive
+    - exportloopref
+    - gci
+    - goheader
+    - goconst
+    - gocritic
+    - godot
+    - gofmt
+    - goprintffuncname
+    - gosec
+    - gosimple
+    - govet
+    - ineffassign
+    - lll
+    - misspell
+    - nakedret
+    - nolintlint
+    - prealloc
+    - revive
+    - rowserrcheck
+    - scopelint
+    - sqlclosecheck
+    - staticcheck
+    - structcheck
+    - stylecheck
+    - typecheck
+    - unconvert
+    - unparam
+    - unused
+    - varcheck
+    - whitespace
+
+service:
+  golangci-lint-version: 1.33.x
+
+
+issues:
+  # Maximum issues count per one linter. Set to 0 to disable. Default is 50.
+  max-per-linter: 0
+
+  # Maximum count of issues with the same text. Set to 0 to disable. Default is 3.
+  max-same-issues: 0
