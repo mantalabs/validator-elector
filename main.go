@@ -35,7 +35,7 @@ var startValidationDelay = 20 * time.Second
 
 type ErrorResponse struct {
 	Jsonrpc string
-	Id      int
+	ID      int `json:"id"`
 	Error   struct {
 		Code    int
 		Message string
@@ -44,13 +44,13 @@ type ErrorResponse struct {
 
 type EthBlockNumber struct {
 	Jsonrpc string
-	Id      int
+	ID      int `json:"id"`
 	Result  string
 }
 
 type EthGetBlockByNumber struct {
 	Jsonrpc string
-	Id      int
+	ID      int `json:"id"`
 	Result  struct {
 		Timestamp string
 	}
@@ -58,12 +58,12 @@ type EthGetBlockByNumber struct {
 
 type IstanbulStopValidating struct {
 	Jsonrpc string
-	Id      int
+	ID      int `json:"id"`
 }
 
 type IstanbulStartValidating struct {
 	Jsonrpc string
-	Id      int
+	ID      int `json:"id"`
 }
 
 func main() {
@@ -95,20 +95,14 @@ func main() {
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 	ctx, cancel := context.WithCancel(context.Background())
 
-	validator, err := newValidator(rpcURL, allowPrimary)
-	if err != nil {
-		klog.Fatalf("Failed to create Validator: %v", err)
-	}
+	validator := newValidator(rpcURL, allowPrimary)
 
 	clientset, err := newClientset(kubeconfig)
 	if err != nil {
 		klog.Fatalf("Failed to connect to cluster: %v", err)
 	}
 
-	elector, err := newElector(clientset, validator, leaseName, leaseNamespace, nodeID)
-	if err != nil {
-		klog.Fatalf("Failed to create Elector: %v", err)
-	}
+	elector := newElector(clientset, validator, leaseName, leaseNamespace, nodeID)
 
 	go func() {
 		<-sigChan
@@ -153,13 +147,13 @@ type Validator struct {
 	rpcURL  string
 }
 
-func newValidator(rpcURL string, allowPrimary bool) (*Validator, error) {
+func newValidator(rpcURL string, allowPrimary bool) *Validator {
 	validator := Validator{}
 	validator.rpcURL = rpcURL
 	validator.channel = make(chan string, 1)
 	validator.wg = &sync.WaitGroup{}
 
-	// Loop continously and try to ensure the Celo Validator behavior/state matches
+	// Loop continuously and try to ensure the Celo Validator behavior/state matches
 	// the desired state. The loop handles intermittent JSONRPC failures.
 	validator.wg.Add(1)
 	go func() {
@@ -181,24 +175,33 @@ func newValidator(rpcURL string, allowPrimary bool) (*Validator, error) {
 				}
 			}
 
-			elapsedOpTime := time.Now().Sub(opStartTime)
+			elapsedOpTime := time.Since(opStartTime)
 
 			switch op {
 			case "shutdown":
-				validator.rpc("istanbul_stopValidating", nil, IstanbulStopValidating{})
-				klog.Info("Validator shutdown")
+				klog.Info("Shutting down validator")
+				_, err := validator.rpc("istanbul_stopValidating", nil, IstanbulStopValidating{})
+				if err != nil {
+					klog.Warningf("RPC to stop validating failed: %v", err)
+				}
 				return
 			case "start":
 				if allowPrimary && elapsedOpTime > startValidationDelay {
-					validator.rpc("istanbul_startValidating", nil, IstanbulStartValidating{})
+					_, err := validator.rpc("istanbul_startValidating", nil, IstanbulStartValidating{})
+					if err != nil {
+						klog.Warningf("RPC to start validating failed: %v", err)
+					}
 				}
 			case "stop":
-				validator.rpc("istanbul_stopValidating", nil, IstanbulStopValidating{})
+				_, err := validator.rpc("istanbul_stopValidating", nil, IstanbulStopValidating{})
+				if err != nil {
+					klog.Warningf("RPC to stop validating failed: %v", err)
+				}
 			}
 		}
 	}()
 
-	return &validator, nil
+	return &validator
 }
 
 func (validator *Validator) rpc(method string, params []interface{}, result interface{}) (interface{}, error) {
@@ -305,9 +308,9 @@ type Elector struct {
 	cancel context.CancelFunc
 }
 
-func newElector(clientset *kubernetes.Clientset, validator *Validator, leaseName string, leaseNamespace string, nodeID string) (*Elector, error) {
+func newElector(clientset *kubernetes.Clientset, validator *Validator, leaseName, leaseNamespace, nodeID string) *Elector {
 	elector := Elector{clientset, validator, leaseName, leaseNamespace, nodeID, nil, nil}
-	return &elector, nil
+	return &elector
 }
 
 func (elector *Elector) Running() bool {
