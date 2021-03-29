@@ -76,8 +76,7 @@ linters:
     - whitespace
 
 service:
-  golangci-lint-version: 1.33.x
-
+  golangci-lint-version: 1.38.x
 
 issues:
   # Maximum issues count per one linter. Set to 0 to disable. Default is 50.
